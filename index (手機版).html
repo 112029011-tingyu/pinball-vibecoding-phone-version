@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>夜市打彈珠</title>
+
+<!-- 字體：優先使用「てやんでぇ (Teyandee)」，電腦有安裝就會自動套用；
+     沒安裝則用下面載入的 Yusei Magic（日文手寫風）與 Huninn 粉圓（繁中手寫風）代替 -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Yusei+Magic&family=Huninn&display=swap" rel="stylesheet">
+
+<style>
+/* ===== 主題色票：淺色與深色模式各一組 ===== */
+:root{
+  --bg:#f6e7cf;      /* 頁面背景 */
+  --fg:#4a1d12;      /* 文字顏色 */
+  --card:#fff3dc;    /* 資訊卡背景 */
+  --acc:#c0392b;     /* 強調色 */
+  /* 字體優先順序：Teyandee → Yusei Magic（日文字、英數）→ Huninn（補繁體中文字）→ 系統字體 */
+  --font:"Teyandee","てやんでぇ","Yusei Magic","Huninn","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){--bg:#2a1608;--fg:#ffe2b0;--card:#4a2810;--acc:#ff9a5a}
+}
+:root[data-theme="dark"]{--bg:#2a1608;--fg:#ffe2b0;--card:#4a2810;--acc:#ff9a5a}
+
+/* ===== 整體版型：直式單欄，由上到下 =====
+   頂部列 → 數據列 → 彈珠台（吃掉剩餘空間）→ 投入數量列 → 操作提示
+   每一塊都在自己的一列裡，不會互相疊在一起 */
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none}
+body{background:var(--bg);color:var(--fg);font-family:var(--font);
+  height:100vh;height:100dvh;                       /* dvh：避開手機網址列伸縮 */
+  display:flex;flex-direction:column;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  user-select:none;-webkit-user-select:none}
+
+/* 頂部列：標題與聲音按鈕 */
+#top{flex:none;display:flex;align-items:center;justify-content:space-between;padding:8px 14px 2px}
+h1{margin:0;font-size:20px;letter-spacing:2px;color:var(--acc)}
+
+/* 數據列：分數、剩餘彈珠、最高分，三等分 */
+#hud{flex:none;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:6px 14px}
+.stat{background:var(--card);padding:4px 6px;border-radius:12px;font-size:12px;text-align:center;
+  box-shadow:0 2px 0 #0002;min-width:0}
+.stat b{display:block;font-size:22px;color:var(--acc);line-height:1.25}
+.stat b.sm{font-size:13px;line-height:1.9}          /* 「尚未挑戰過」用小字 */
+
+/* 彈珠台區域：佔滿剩餘高度，實際大小由 JavaScript（fit 函式）依可用空間計算，比例固定 3:5 */
+#stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:4px 14px}
+#wrap{position:relative;border-radius:14px;overflow:hidden;box-shadow:0 6px 22px #0007}
+canvas{width:100%;height:100%;display:block;touch-action:none;transition:filter .6s ease}
+canvas.blur{filter:blur(8px) brightness(.75)}        /* 選單與結算時，把彈珠台模糊化 */
+
+/* 疊層：只放面板，背景透明，讓模糊的彈珠台透出來 */
+.ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(25,10,3,.25);padding:10px}
+.ov[hidden]{display:none}
+.panel{background:#3a1c0c;color:#ffe2b0;border:3px solid #e9c46a;border-radius:16px;
+  padding:16px 14px;text-align:center;display:flex;flex-direction:column;align-items:center;
+  gap:10px;max-width:100%;max-height:100%;overflow:auto;box-shadow:0 8px 24px #000a}
+.panel h2{margin:0;font-size:22px}
+
+/* 按鈕：木頭質感，手指好按的大小 */
+button,.btn{font:inherit;font-size:16px;color:#ffe2b0;background:#6b3a1a;border:2px solid #e9c46a;
+  border-radius:10px;padding:8px 14px;min-height:42px;cursor:pointer;box-shadow:0 3px 0 #2a1208;
+  text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+button:active,.btn:active{transform:translateY(2px);box-shadow:0 1px 0 #2a1208}
+button.on{background:#c0392b;border-color:#ffd966}      /* 目前選取的投入數量 */
+#snd{min-height:36px;padding:2px 10px;font-size:18px}
+
+#opts{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;width:100%}   /* 關卡選項 2 欄 */
+#opts button{flex-direction:column;font-size:18px;padding:8px 6px;min-height:54px}
+#opts small{display:block;font-size:11px;opacity:.85}
+.row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.note{font-size:12px;opacity:.85}
+#shot img{max-width:100%;max-height:45vh;border-radius:10px}
+
+/* 底部：本次投入數量，四顆按鈕等寬 */
+#ctrl{flex:none;display:flex;align-items:center;gap:10px;padding:6px 14px 0}
+#ctrl .lbl{font-size:13px;white-space:nowrap}
+#stk{flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+#stk button{min-height:46px;padding:4px}
+.hint{flex:none;text-align:center;font-size:12px;opacity:.8;padding:4px 14px 8px}
+</style>
+</head>
+
+<body>
+
+<!-- 頂部列：標題與聲音開關 -->
+<header id="top">
+  <h1>🏮 夜市打彈珠</h1>
+  <button id="snd" aria-label="聲音開關">🔊</button>
+</header>
+
+<!-- 數據列：分數、剩餘彈珠、目前關卡的最高分 -->
+<section id="hud">
+  <div class="stat">分數<b id="sc">0</b></div>
+  <div class="stat">剩餘彈珠<b id="left">-</b></div>
+  <div class="stat" id="bl">最高分<b id="best">-</b></div>
+</section>
+
+<!-- 彈珠台與各種疊層畫面 -->
+<main id="stage">
+  <div id="wrap">
+    <canvas id="cv"></canvas>
+
+    <!-- 選擇關卡 -->
+    <div class="ov" id="menu"><div class="panel">
+      <h2>選擇關卡</h2>
+      <div id="opts"></div>
+      <div class="note">最高分只存在這支手機的瀏覽器，不需登入</div>
+    </div></div>
+
+    <!-- 結算 -->
+    <div class="ov" id="end" hidden><div class="panel">
+      <h2>遊戲結束</h2>
+      <div id="res" style="font-size:20px"></div>
+      <div id="nb" style="font-size:16px"></div>
+      <div class="row"><button id="bs">分享成績</button><button id="bp">儲存截圖</button></div>
+      <div class="row"><button id="ba">再玩一次</button><button id="bm">換關卡</button></div>
+    </div></div>
+
+    <!-- 彈珠數不足警告 -->
+    <div class="ov" id="warn" hidden><div class="panel">
+      <h2>⚠️ 彈珠數不足</h2>
+      <p id="wt" style="margin:0;font-size:15px"></p>
+      <button id="bw">我知道了</button>
+    </div></div>
+
+    <!-- 截圖預覽 -->
+    <div class="ov" id="shot" hidden><div class="panel">
+      <img id="si" alt="">
+      <div class="note" id="sn"></div>
+      <div class="row"><a class="btn" id="dl" download="夜市打彈珠成績.png">下載圖片</a><button id="bx">關閉</button></div>
+    </div></div>
+  </div>
+</main>
+
+<!-- 底部：本次投入彈珠數 -->
+<footer id="ctrl">
+  <span class="lbl">本次投入</span>
+  <div id="stk"></div>
+</footer>
+<div class="hint">按住彈珠台蓄力，放開發射</div>
+
+<script>
+/* =====================================================
+   一、常數與遊戲狀態
+   ===================================================== */
+const W=360, H=600;          // 場地邏輯尺寸（畫面再依視窗縮放）
+const R=9;                   // 彈珠半徑（略微加大，讓碰撞更容易發生）
+const G=.17;                 // 重力（調小讓彈珠下落較慢）
+const SUB=3;                 // 每幀物理子步數（越高越精準）
+const VMAX=11;               // 彈珠在釘陣內的最高速度，避免跳得太快
+const LANE=318;              // 右側發射軌道的左邊界 x
+const SLOTS=7;               // 得分洞數量
+const SW=LANE/SLOTS;         // 每個洞的寬度
+const RY=502;                // 彈珠在發射位置的 y
+const PTS=[10,30,50,100,50,30,10];                 // 各洞分數
+const COLORS=['#c0392b','#e8a33d','#f4d58d'];      // 洞位配色：紅、橘黃、米
+const FONT='"Teyandee","てやんでぇ","Yusei Magic","Huninn",sans-serif';   // 畫布文字用的字體
+const DPR=Math.min(3,Math.max(2,Math.ceil(window.devicePixelRatio||2)));   // 依螢幕像素密度決定解析度（2～3 倍）
+                 // 畫布解析度倍率，放大後依然清晰
+
+const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+cv.width=W*DPR; cv.height=H*DPR; ctx.scale(DPR,DPR);
+const $=id=>document.getElementById(id);
+
+// 牆面線段 [x1,y1,x2,y2]：外框、發射軌道隔板、頂端斜角
+const segs=[[0,0,0,H],[0,0,W,0],[W,0,W,H],[LANE,120,LANE,H],[W,90,W-90,0],[0,80,80,0]];
+for(let i=1;i<SLOTS;i++) segs.push([i*SW,528,i*SW,H]);   // 得分洞的隔板
+
+// 釘子：共 10 排，奇偶排交錯，整體等距鋪滿場地寬度
+// 偶數排：從左牆(x=0)到右側隔板(x=LANE)各放一根，半根釘子嵌在牆裡，
+// 彈珠貼著邊緣掉下來時會撞到釘子頂端被彈回場內，不會一路直直掉到底
+const pins=[], PS=LANE/7;          // PS = 同一排釘子的間距
+for(let r=0;r<10;r++){
+  const odd=r%2;                    // 奇數排錯開半格
+  for(let k=0;k<(odd?7:8);k++){
+    let x=(odd?PS/2:0)+k*PS;
+    // 奇數排最靠牆的釘子往內推到離牆至少 30，讓牆與釘子之間的縫隙明顯大於彈珠，
+    // 避免彈珠被卡在牆和釘子之間的楔形縫隙裡
+    if(odd) x=Math.min(Math.max(x,30),LANE-30);
+    pins.push([x,165+r*36]);
+  }
+}
+
+// 遊戲狀態
+let total=100,   // 本局彈珠總量
+    left=0,      // 剩餘彈珠
+    stake=1,     // 本次投入數量
+    score=0,     // 目前分數
+    m=null,      // 場上的彈珠
+    charging=false, comp=0,   // 是否蓄力中、彈簧壓縮程度(0~1)
+    over=true,   // 是否在非遊戲狀態（選單或結算）
+    texts=[],    // 得分浮動文字
+    snd=true,    // 是否開啟聲音
+    lastC=0;     // 蓄力音節流計時
+
+/* =====================================================
+   二、最高分紀錄（localStorage，不需登入）
+   每個彈珠總量各自一筆，讀取失敗時不影響遊玩
+   ===================================================== */
+const bestKey=n=>'marbleBest'+n;
+function getBest(n){ try{const v=localStorage.getItem(bestKey(n));return v===null?null:+v}catch(e){return null} }
+function setBest(n,v){ try{localStorage.setItem(bestKey(n),v)}catch(e){} }
+
+/* =====================================================
+   三、音效（Web Audio 即時合成，不需音檔）
+   ===================================================== */
+// ----- 震動（手機）：以節流避免過於頻繁；不支援的瀏覽器（例如 iPhone Safari）會自動略過 -----
+let lastV=0;
+function vib(p,gap){
+  const t=performance.now();
+  if(t-lastV<(gap===undefined?70:gap)) return;
+  lastV=t;
+  try{ navigator.vibrate && navigator.vibrate(p) }catch(e){}
+}
+
+let ac, master, noiseBuf;
+
+// 建立 AudioContext（瀏覽器規定需玩家第一次互動後才能發聲）
+function ctxA(){
+  if(!ac){
+    ac=new (window.AudioContext||window.webkitAudioContext)();
+    master=ac.createGain(); master.gain.value=snd?1:0; master.connect(ac.destination);
+    // 預先產生一段白噪音，給碰撞「喀」聲與環境音使用
+    noiseBuf=ac.createBuffer(1,ac.sampleRate,ac.sampleRate);
+    const d=noiseBuf.getChannelData(0);
+    for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+    ambient();
+  }
+  if(ac.state==='suspended') ac.resume();
+  return ac;
+}
+
+// 單音：波形、起始頻率、音量、長度、可滑向的結束頻率、延遲秒數
+function tone(type,f,v,d,f2,delay){
+  if(!snd) return;
+  try{
+    const a=ctxA(), t=a.currentTime+(delay||0), o=a.createOscillator(), g=a.createGain();
+    o.type=type; o.frequency.setValueAtTime(f,t);
+    if(f2) o.frequency.exponentialRampToValueAtTime(f2,t+d);
+    g.gain.setValueAtTime(v,t); g.gain.exponentialRampToValueAtTime(.0001,t+d);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t+d+.02);
+  }catch(e){}
+}
+
+// 噪音爆音：音量、長度、濾波頻率、濾波類型、延遲
+function noise(v,d,f,type,delay){
+  if(!snd) return;
+  try{
+    const a=ctxA(), t=a.currentTime+(delay||0), s=a.createBufferSource(), fl=a.createBiquadFilter(), g=a.createGain();
+    s.buffer=noiseBuf; fl.type=type||'bandpass'; fl.frequency.value=f;
+    g.gain.setValueAtTime(v,t); g.gain.exponentialRampToValueAtTime(.0001,t+d);
+    s.connect(fl); fl.connect(g); g.connect(master); s.start(t); s.stop(t+d+.02);
+  }catch(e){}
+}
+
+let lastPin=0, lastWall=0;   // 碰撞音節流，避免聲音爆量
+
+// 撞到釘子：清脆的金屬「叮」，音高隨機、力道越大越響
+function sndPin(imp){
+  const t=performance.now(); if(t-lastPin<35) return; lastPin=t;
+  const v=Math.min(1,imp/6)*.12+.04, f=1100+Math.random()*1100;
+  tone('sine',f,v,.14);
+  tone('triangle',f*2.01,v*.5,.09);   // 疊一個泛音，增加金屬感
+}
+
+// 撞到邊框：低沉的木頭「叩」聲
+function sndWall(imp){
+  const t=performance.now(); if(t-lastWall<60) return; lastWall=t;
+  const v=Math.min(1,imp/8)*.14+.05;
+  tone('sine',170,v,.14,80);
+  noise(v*.8,.06,700,'lowpass');
+}
+
+// 彈簧放開：「砰」的彈射聲
+function sndLaunch(){
+  tone('triangle',420,.12,.22,110);
+  noise(.1,.08,1500,'bandpass');
+}
+
+// 進洞得分：先「嘩啦」滾動，再依分數播放上行音階，100 分有大獎音效
+function sndScore(i){
+  const pts=PTS[i], n=pts>=100?5:pts>=50?3:pts>=30?2:1;
+  const notes=[523,659,784,1047,1319];         // C5 E5 G5 C6 E6
+  noise(.12,.3,2600,'bandpass');                  // 彈珠在洞裡滾動
+  noise(.08,.25,3200,'bandpass',.08);
+  for(let k=0;k<n;k++){
+    tone('triangle',notes[k],.13,.22,null,.12+k*.09);
+    tone('sine',notes[k]*2,.04,.18,null,.12+k*.09);
+  }
+  if(pts>=100){                                   // 大獎閃亮尾音
+    for(let k=0;k<4;k++) tone('sine',2000+k*400,.05,.25,null,.65+k*.06);
+  }
+}
+
+// 結算音：破紀錄是歡呼上行音階，否則是柔和下行
+function sndEnd(newRecord){
+  const up=[523,659,784,1047,1319,1568], down=[784,659,523];
+  (newRecord?up:down).forEach((f,k)=>tone('triangle',f,.14,.3,null,k*.13));
+}
+function sndCharge(c){ tone('square',110+c*220,.025,.06) }                       // 蓄力嗡聲
+function sndWarn(){ tone('square',220,.07,.18,150); tone('square',220,.07,.18,150,.2) } // 警告音
+function sndClick(){ tone('sine',720,.06,.05) }                                  // 按鈕輕點聲
+
+// 夜市環境音：人聲底噪 + 小聲的機台電子音 + 偶爾的叫賣聲（原型以合成方式模擬）
+function ambient(){
+  try{
+    const s=ac.createBufferSource(), f=ac.createBiquadFilter(), g=ac.createGain();
+    s.buffer=noiseBuf; s.loop=true; f.type='bandpass'; f.frequency.value=500; g.gain.value=.05;
+    s.connect(f); f.connect(g); g.connect(master); s.start();          // 人群交談聲
+    setInterval(()=>{                                                   // 遠處遊戲機台
+      if(!snd) return;
+      [0,.12,.24].forEach(o=>tone('square',600+Math.random()*600,.012,.1,null,o));
+    },4000);
+    const say=['來喔來喔，看一看喔','打彈珠喔，一次一百','便宜賣喔，不買看看','歡迎光臨，慢慢挑'];
+    setInterval(()=>{                                                   // 店家叫賣（語音合成）
+      if(!snd||!window.speechSynthesis||over) return;
+      const u=new SpeechSynthesisUtterance(say[Math.random()*say.length|0]);
+      u.lang='zh-TW'; u.volume=.2; u.rate=1.1; speechSynthesis.speak(u);
+    },16000);
+  }catch(e){}
+}
+
+/* =====================================================
+   四、物理：彈珠與線段（含釘子）碰撞
+   (x1,y1)-(x2,y2) 為線段；pr 為線段厚度；e 為反彈係數
+   回傳撞擊力道（沒撞到回傳 0）
+   ===================================================== */
+function hit(x1,y1,x2,y2,pr,e){
+  const dx=x2-x1, dy=y2-y1;
+  let t=((m.x-x1)*dx+(m.y-y1)*dy)/(dx*dx+dy*dy);
+  t=Math.max(0,Math.min(1,t));                       // 線段上離彈珠最近的點
+  const cx=x1+dx*t, cy=y1+dy*t;
+  let nx=m.x-cx, ny=m.y-cy, d=Math.hypot(nx,ny);
+  const mn=R+pr;
+  if(d<mn){
+    if(!d){nx=0;ny=-1;d=1}
+    nx/=d; ny/=d;
+    m.x=cx+nx*mn; m.y=cy+ny*mn;                      // 把彈珠推出碰撞區
+    const vn=m.vx*nx+m.vy*ny;
+    if(vn<0){ m.vx-=(1+e)*vn*nx; m.vy-=(1+e)*vn*ny; return -vn }   // 反射速度
+  }
+  return 0;
+}
+
+/* =====================================================
+   五、遊戲流程：開始、選單、結算
+   ===================================================== */
+function spawn(){ m={x:334,y:RY,vx:0,vy:0,loaded:true} }   // 在發射位放一顆待發彈珠
+
+function hudUp(){   // 更新左側數據
+  $('sc').textContent=score; $('left').textContent=left;
+  const b=getBest(total);
+  $('bl').firstChild.textContent='最高分（'+total+'顆）';
+  $('best').textContent=b===null?'尚未挑戰過':b;
+  $('best').className=b===null?'sm':'';
+}
+
+function stakeUI(){ // 畫出投入數量按鈕
+  $('stk').innerHTML=[1,5,10,20].map(n=>`<button class="${n==stake?'on':''}" data-n="${n}">${n} 顆</button>`).join('');
+}
+
+function start(n){  // 開始新的一局：隱藏所有疊層，彈珠台恢復清晰
+  total=n; left=n; score=0; over=false; texts=[];
+  $('menu').hidden=true; $('end').hidden=true; $('warn').hidden=true;
+  cv.classList.remove('blur');
+  spawn(); hudUp(); ctxA();
+}
+
+function menu(){    // 回到選關卡畫面：彈珠台模糊化
+  over=true; m=null; $('end').hidden=true; $('menu').hidden=false;
+  cv.classList.add('blur');
+  $('opts').innerHTML=[50,100,150,200,250,300].map(n=>{
+    const b=getBest(n);
+    return `<button data-t="${n}">${n} 顆<small>最高分：${b===null?'尚未挑戰過':b}</small></button>`;
+  }).join('');
+}
+
+function finish(){  // 彈珠用完，結算：彈珠台模糊化後顯示結算面板
+  over=true; m=null;
+  const b=getBest(total), nb=b===null||score>b;     // 是否破紀錄
+  if(nb) setBest(total,score);
+  $('res').textContent='得分 '+score+'（'+total+'顆關卡）';
+  $('nb').textContent=nb?'🎉 新紀錄！':'歷史最高：'+b;
+  hudUp(); sndEnd(nb);
+  setTimeout(()=>{ cv.classList.add('blur'); $('end').hidden=false },600);
+}
+
+// 彈珠數不足的警告視窗
+function warn(n){
+  n=n||stake;
+  $('wt').textContent=`剩餘 ${left} 顆，本次想投入 ${n} 顆，數量不足，請斟酌投入。`;
+  $('warn').hidden=false; sndWarn(); vib([20,40,20]);
+}
+
+/* =====================================================
+   六、每幀更新：蓄力、移動、碰撞、得分
+   ===================================================== */
+function step(){
+  // 蓄力：彈簧逐漸壓縮，約 1 秒到底並維持
+  if(charging){
+    comp=Math.min(1,comp+.018);
+    const t=performance.now();
+    if(t-lastC>110){ lastC=t; sndCharge(comp); vib(6,0) }
+    if(m&&m.loaded) m.y=RY+comp*55;       // 彈珠隨拉桿一起下壓
+  }
+  if(!m||m.loaded||over) return;
+
+  // 分成多個子步計算，碰撞更準
+  for(let s=0;s<SUB;s++){
+    m.vy+=G/SUB; m.x+=m.vx/SUB; m.y+=m.vy/SUB;
+    if(m.x<LANE){ const sp=Math.hypot(m.vx,m.vy); if(sp>VMAX){ m.vx*=VMAX/sp; m.vy*=VMAX/sp } }   // 釘陣內限速
+    for(const p of pins){                  // 撞釘子
+      const v=hit(p[0],p[1],p[0]+.01,p[1],4.5,.42);
+      if(v>1.5){ m.vx+=(Math.random()-.5)*.4; sndPin(v); vib(6) }   // 加一點隨機擾動
+    }
+    for(const g of segs){                  // 撞邊框與隔板
+      const v=hit(g[0],g[1],g[2],g[3],2,.4);
+      if(v>2){ sndWall(v); vib(10) }
+    }
+  }
+
+  // 力道不足滑回發射位：回到待發狀態，不扣珠
+  if(m.x>LANE&&m.y>=RY&&m.vy>0){ m.y=RY; m.x=334; m.vx=m.vy=0; m.loaded=true }
+
+  // 防卡死：彈珠在釘陣內幾乎不動超過約 0.4 秒，就往場地中央輕輕彈一下
+  if(m.x<LANE&&m.y<525){
+    m.still=Math.hypot(m.vx,m.vy)<.35?(m.still||0)+1:0;
+    if(m.still>25){
+      m.vx=(m.x<LANE/2?1:-1)*(1.5+Math.random()*1.5);
+      m.vy=-1.5; m.still=0;
+    }
+  }
+
+  // 進洞：得分 = 投入數量 × 洞位分數
+  if(m.x<LANE&&m.y>548){
+    const i=Math.min(SLOTS-1,Math.max(0,m.x/SW|0)), n=stake, p=PTS[i]*n;
+    score+=p; left-=n;
+    texts.push({x:(i+.5)*SW,y:535,t:70,s:'+'+p});
+    sndScore(i); vib(PTS[i]>=100?[40,30,60]:20); hudUp();
+    if(left<=0) finish();
+    else{ spawn(); if(stake>left) warn() }   // 下次投入數量超過剩餘時提醒
+  }
+}
+
+/* =====================================================
+   七、繪圖
+   ===================================================== */
+function spring(){  // 彈簧與拉桿：壓縮時變短變密
+  const top=510+comp*55, bot=596, n=9;
+  ctx.strokeStyle='#d9d9d9'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo(334,bot);
+  for(let i=1;i<=n;i++) ctx.lineTo(334+(i%2?10:-10), bot-(bot-top)*i/n);
+  ctx.stroke();
+  ctx.fillStyle='#c8923b'; ctx.fillRect(322,top-4,24,5);   // 拉桿頭
+}
+
+function draw(){
+  // 木紋檯面
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#8a4b20'); bg.addColorStop(1,'#5e3014');
+  ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#0003'; ctx.fillRect(LANE,0,W-LANE,H);   // 發射軌道加深
+
+  // 得分洞與分數
+  for(let i=0;i<SLOTS;i++){
+    const c=COLORS[i==3?0:1+(i%2)];
+    ctx.fillStyle=c; ctx.fillRect(i*SW,545,SW,55);
+    ctx.fillStyle=i==3?'#fff3dc':'#3a1608';
+    ctx.font=`bold 15px ${FONT}`; ctx.textAlign='center';
+    ctx.fillText(PTS[i],(i+.5)*SW,580);
+  }
+
+  // 金色邊框與隔板
+  ctx.strokeStyle='#e9c46a'; ctx.lineWidth=3; ctx.lineCap='round';
+  for(const g of segs){ ctx.beginPath(); ctx.moveTo(g[0],g[1]); ctx.lineTo(g[2],g[3]); ctx.stroke() }
+
+  // 黃銅釘子
+  for(const p of pins){
+    ctx.fillStyle='#ffd966'; ctx.beginPath(); ctx.arc(p[0],p[1],4,0,7); ctx.fill();
+    ctx.fillStyle='#fff8'; ctx.beginPath(); ctx.arc(p[0]-1,p[1]-1,1.4,0,7); ctx.fill();
+  }
+
+  spring();
+
+  // 綠色玻璃彈珠
+  if(m){
+    const g=ctx.createRadialGradient(m.x-3,m.y-3,1,m.x,m.y,R);
+    g.addColorStop(0,'#fff'); g.addColorStop(.4,'#7dffb0'); g.addColorStop(1,'#00a35c');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(m.x,m.y,R,0,7); ctx.fill();
+  }
+
+  // 得分浮動文字（向上飄並淡出）
+  ctx.font=`bold 20px ${FONT}`; ctx.textAlign='center';
+  texts=texts.filter(t=>t.t>0);
+  for(const t of texts){ t.t--; t.y-=.6; ctx.globalAlpha=t.t/70; ctx.fillStyle='#fff'; ctx.fillText(t.s,t.x,t.y) }
+  ctx.globalAlpha=1;
+}
+
+/* =====================================================
+   八、分享與截圖
+   ===================================================== */
+// 產生成績圖（遊戲畫面 + 半透明成績條）。畫布本身不含 CSS 模糊，截圖是清晰的
+function shotCanvas(){
+  const c=document.createElement('canvas'); c.width=720; c.height=1200;
+  const x=c.getContext('2d');
+  x.drawImage(cv,0,0,720,1200);
+  x.fillStyle='#000a'; x.fillRect(0,380,720,360);
+  x.textAlign='center';
+  x.fillStyle='#ffd966'; x.font=`bold 56px ${FONT}`; x.fillText('夜市打彈珠',360,470);
+  x.fillStyle='#fff'; x.font=`bold 84px ${FONT}`; x.fillText(score+' 分',360,590);
+  x.font=`36px ${FONT}`; x.fillText(total+' 顆關卡｜歷史最高 '+getBest(total),360,670);
+  return c;
+}
+function showShot(c,msg){   // 顯示截圖預覽，可右鍵儲存或按下載
+  const u=c.toDataURL('image/png');
+  $('si').src=u; $('dl').href=u; $('sn').textContent=msg||'';
+  $('shot').hidden=false;
+}
+$('bp').onclick=()=>showShot(shotCanvas(),'長按圖片即可儲存到相簿，或按「下載圖片」');
+
+// 分享：複製成績文字與連結，並顯示截圖。若瀏覽器支援系統分享則優先使用
+async function share(){
+  const t=`我在《夜市打彈珠》${total}顆關卡拿到 ${score} 分！`, c=shotCanvas();
+  c.toBlob(async blob=>{
+    const f=new File([blob],'marble.png',{type:'image/png'});
+    try{
+      if(navigator.canShare&&navigator.canShare({files:[f]})){ await navigator.share({files:[f],text:t,url:location.href}); return }
+      if(navigator.share){ await navigator.share({text:t,url:location.href}); return }
+    }catch(e){ if(e.name==='AbortError') return }
+    let msg='';
+    try{ await navigator.clipboard.writeText(t+' '+location.href); msg='成績文字與連結已複製，可直接貼上分享；圖片請長按儲存' }
+    catch(e){ msg='請自行複製文字：'+t }
+    showShot(c,msg);
+  },'image/png');
+}
+$('bs').onclick=share;
+
+/* =====================================================
+   九、操作事件（滑鼠與鍵盤）
+   ===================================================== */
+// 開始蓄力（投入數量超過剩餘時改為彈出警告）
+function press(){
+  ctxA();
+  if(!over&&m&&m.loaded&&!charging){
+    if(stake>left){ warn(); return }
+    charging=true; comp=0; vib(15,0);
+  }
+}
+// 放開：依壓縮程度決定發射力道
+function rel(){
+  if(charging&&m&&m.loaded){ m.vy=-(10+comp*10); m.loaded=false; sndLaunch(); vib(30,0) }
+  charging=false; comp=0;
+}
+cv.addEventListener('pointerdown',e=>{ e.preventDefault(); press() });
+window.addEventListener('pointerup',rel);        // 滑鼠移出畫面再放開也能發射
+window.addEventListener('pointercancel',rel);
+window.addEventListener('blur',rel);
+
+cv.addEventListener('contextmenu',e=>e.preventDefault());   // 長按不跳出系統選單
+
+// 按鈕：選關卡、選投入數量
+document.addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  if(b.dataset.t){ start(+b.dataset.t); return }
+  if(b.dataset.n){
+    const n=+b.dataset.n;
+    if(!over&&n>left){ warn(n); return }      // 防呆：不能投入超過剩餘數量
+    stake=n; stakeUI(); sndClick(); return;
+  }
+  if(b.id!=='snd') sndClick();
+});
+$('ba').onclick=()=>start(total);
+$('bm').onclick=menu;
+$('bw').onclick=()=>$('warn').hidden=true;
+$('bx').onclick=()=>$('shot').hidden=true;
+$('snd').onclick=()=>{          // 聲音開關
+  snd=!snd; $('snd').textContent=snd?'🔊':'🔇';
+  if(master) master.gain.value=snd?1:0;
+  if(!snd&&window.speechSynthesis) speechSynthesis.cancel();
+};
+
+/* =====================================================
+   十、啟動
+   ===================================================== */
+// 依可用空間計算彈珠台大小（寬:高 = 3:5），視窗大小改變或手機轉向時重新計算
+function fit(){
+  const st=$('stage'), cs=getComputedStyle(st);
+  const aw=st.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);
+  const ah=st.clientHeight-parseFloat(cs.paddingTop)-parseFloat(cs.paddingBottom);
+  const w=Math.max(0,Math.min(aw,ah*.6));
+  const wrap=$('wrap'); wrap.style.width=w+'px'; wrap.style.height=(w/.6)+'px';
+}
+window.addEventListener('resize',fit);
+window.addEventListener('orientationchange',fit);
+if(window.ResizeObserver) new ResizeObserver(fit).observe($('stage'));
+fit();
+
+stakeUI(); menu(); hudUp();
+(function loop(){ step(); draw(); requestAnimationFrame(loop) })();   // 遊戲主迴圈
+</script>
+</body>
+</html>
